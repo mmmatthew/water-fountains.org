@@ -19,17 +19,32 @@ jobs:
           npm run prestart
           npm run sync_datablue
           npm run build
-      - name: deploy
-        if: ${{ github.repository == 'water-fountains/proximap' && github.event_name == 'push' && (github.ref == 'stable' ||  github.ref == 'develop') }}
+      - name: setup SSH
+        if: ${{ github.repository == 'water-fountains/proximap' && github.event_name == 'push' && (github.ref == 'refs/heads/stable' ||  github.ref == 'refs/heads/test-deploy') }}
         env:
-          encrypted_e64b3d07f71e_key: ${{secrets.encrypted_e64b3d07f71e_key}}
-          encrypted_e64b3d07f71e_iv: ${{secrets.encrypted_e64b3d07f71e_iv}}
-          branch: ${{ github.ref }}
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
-          openssl aes-256-cbc -K "$encrypted_e64b3d07f71e_key" -iv "$encrypted_e64b3d07f71e_iv" -in deploy_rsa.enc -out deploy_rsa -d
-          chmod 400 deploy_rsa
-          if [ "$branch" = "stable" ]; then
-            rsync -e "ssh -i deploy_rsa -o StrictHostKeyChecking=no" -r --delete-after --quiet $TRAVIS_BUILD_DIR/dist/. root@water-fountains.org:/var/www/stable
+          mkdir -p ~/.ssh
+          echo "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh-agent -a $SSH_AUTH_SOCK > /dev/null
+          ssh-add - <<< "$SSH_PRIVATE_KEY"
+      - name: deploy.develop
+        if: ${{ github.repository == 'water-fountains/proximap' && github.event_name == 'push' && (github.ref == 'refs/heads/stable' ||  github.ref == 'refs/heads/test-deploy') }}
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        run: |
+          current_dir="$(pwd)"
+          if [ "${{ github.ref }}" == "refs/heads/stable" ]; then
+            rsync -r --delete-after --quiet "$current_dir/dist/." deploy@water-fountains.org:/var/www/stable
           else
-            rsync -e "ssh -i deploy_rsa -o StrictHostKeyChecking=no" -r dist/. root@water-fountains.org:/var/www/beta/code/dist
+            rsync -r $current_dir/dist/. deploy@water-fountains.org:/var/www/beta/code/dist
           fi
+      - name: Cleanup ssh
+        if: always()
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        run: |
+          ssh-add -D
+          rm -Rf *
